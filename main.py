@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from preprocessing import *
 from staff_removal import *
 from helper_methods import *
@@ -17,9 +17,9 @@ model = pickle.load(open(filename, "rb"))
 accidentals = ["x", "hash", "b", "symbol_bb", "d"]
 
 
-def preprocessing(input_folder, fn, f):
+def preprocessing(fn, f):
     # Get image and its dimensions #
-    height, width, in_img = preprocess_img("{}/{}".format(input_folder, fn))
+    height, width, in_img = preprocess_img(fn)
 
     # Get line thickness and list of staff lines #
     staff_lines_thicknesses, staff_lines = get_staff_lines(
@@ -73,8 +73,8 @@ def get_label_cutted_boundaries(boundary, height_before, cutted):
     return get_target_boundaries(label, cur_symbol, y2)
 
 
-def process_image(input_folder, fn, f):
-    cutted, ref_lines, lines_spacing = preprocessing(input_folder, fn, f)
+def process_image(input_filepath, f):
+    cutted, ref_lines, lines_spacing = preprocessing(input_filepath, f)
 
     last_acc = ""
     last_num = ""
@@ -130,33 +130,48 @@ def process_image(input_folder, fn, f):
 
 @app.route("/process", methods=["POST"])
 def process():
-    # Receive input folder path from the request
-    input_folder = request.json["input_folder"]
+    # Receive input file from the request
+    input_file = request.files["image"]
 
     try:
         os.mkdir(output_folder)
     except OSError as error:
         pass
 
-    list_of_images = os.listdir(input_folder)
-    for _, fn in enumerate(list_of_images):
-        # Open the output text file #
-        file_prefix = fn.split(".")[0]
-        f = open(f"{output_folder}/{file_prefix}.txt", "w")
+    # Save the uploaded image to a temporary file
+    temp_filepath = "./temp.jpg"
+    input_file.save(temp_filepath)
 
-        # Process each image separately #
-        try:
-            process_image(input_folder, fn, f)
-        except Exception as e:
-            print(e)
-            print(f"{input_folder}-{fn} has been failed !!")
-            pass
+    # Open the output text file
+    file_prefix = os.path.splitext(input_file.filename)[0]
+    output_filepath = f"{output_folder}/{file_prefix}.txt"
+    f = open(output_filepath, "w")
 
-        f.close()
-    print("Finished !!")
+    # Process the image
+    try:
+        process_image(temp_filepath, f)
+    except Exception as e:
+        print(e)
+        print(f"{input_file.filename} has failed!")
+        pass
 
-    return {"message": "Processing completed."}
+    f.close()
+    os.remove(temp_filepath)
+
+    print("Processing completed.")
+
+    # Read the output text file and send the contents as the response
+    with open(output_filepath, "r") as f:
+        output_text = f.read()
+
+    response = {
+        "message": "Processing completed.",
+        "output_filepath": output_filepath,
+        "output_text": output_text,
+    }
+
+    return jsonify(response)
 
 
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0")
+    app.run(debug=True, host="0.0.0.0")
